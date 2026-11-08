@@ -32,28 +32,35 @@ Compares a statistical model, gradient boosting and a neural network, and analys
 
 ## Results (test set)
 
-| Horizon | Model | MAE | RMSE | WAPE | Coverage 80% | Width 80% | Interval score |
-|---|---|---|---|---|---|---|---|
-| 15 min | seasonal naive | 7.220 | 11.386 | 0.263 | — | — | — |
-| | Poisson GLM | 5.201 | 7.932 | 0.190 | 0.737 | 12.0 | 25.07 |
-| | **CatBoost** | **4.982** | **7.686** | **0.182** | 0.780 | 15.6 | **22.61** |
-| | MLP (quantile) | 5.013 | 7.866 | 0.183 | 0.792 | 16.1 | 22.70 |
-| 30 min | seasonal naive | 7.220 | 11.386 | 0.263 | — | — | — |
-| | Poisson GLM | 5.607 | 8.651 | 0.205 | 0.711 | 12.1 | 27.87 |
-| | **CatBoost** | **5.308** | **8.301** | **0.194** | 0.778 | 16.6 | **24.25** |
-| | MLP (quantile) | 5.352 | 8.558 | 0.195 | 0.799 | 17.6 | 24.34 |
-| 60 min | seasonal naive | 7.220 | 11.386 | 0.263 | — | — | — |
-| | Poisson GLM | 6.019 | 9.312 | 0.220 | 0.684 | 12.1 | 30.73 |
-| | CatBoost | **5.597** | **8.764** | **0.204** | 0.771 | 17.3 | 25.88 |
-| | **MLP (quantile)** | 5.694 | 9.070 | 0.208 | 0.809 | 19.0 | **25.79** |
+| Horizon | Model | MAE | RMSE | WAPE | Coverage 80% | Interval score |
+|---|---|---|---|---|---|---|
+| 15 min | persistence | 6.204 | 9.395 | 0.226 | — | — |
+| | mean of last hour | 6.355 | 9.689 | 0.232 | — | — |
+| | seasonal naive | 7.220 | 11.386 | 0.263 | — | — |
+| | Poisson GLM | 5.197 | 7.929 | 0.190 | 0.737 | 25.06 |
+| | **CatBoost** | **4.979** | **7.671** | **0.182** | 0.786 | 22.71 |
+| | MLP (5 seeds) | 4.988 ± 0.028 | 7.770 ± 0.050 | 0.182 | 0.794 ± 0.009 | 22.43 ± 0.14 |
+| 30 min | persistence | 7.150 | 11.071 | 0.261 | — | — |
+| | mean of last hour | 7.331 | 11.243 | 0.268 | — | — |
+| | seasonal naive | 7.220 | 11.386 | 0.263 | — | — |
+| | Poisson GLM | 5.601 | 8.647 | 0.204 | 0.710 | 27.86 |
+| | **CatBoost** | **5.301** | **8.281** | **0.193** | 0.778 | 24.18 |
+| | MLP (5 seeds) | 5.303 ± 0.031 | 8.403 ± 0.088 | 0.194 | 0.784 ± 0.023 | 23.96 ± 0.27 |
+| 60 min | persistence | 8.710 | 13.404 | 0.318 | — | — |
+| | mean of last hour | 9.217 | 14.124 | 0.336 | — | — |
+| | seasonal naive | 7.220 | 11.386 | 0.263 | — | — |
+| | Poisson GLM | 6.014 | 9.309 | 0.219 | 0.684 | 30.69 |
+| | **CatBoost** | **5.581** | **8.725** | **0.204** | 0.773 | 25.86 |
+| | MLP (5 seeds) | 5.657 ± 0.113 | 9.060 ± 0.245 | 0.206 | 0.789 ± 0.009 | 25.70 ± 0.70 |
 
-![MAE by horizon](assets/metrics_mae.png)
+CatBoost is from a single run. MLP values are mean ± std over 5 seeds.
 
 Takeaways:
 
-- CatBoost and the MLP are within ~1–2% of each other on MAE and both beat the Poisson GLM by 5–7% and the seasonal-naive baseline by ~25–30%.
-- The Poisson GLM's intervals are too narrow (coverage 68–74% instead of 80%): real demand is overdispersed relative to a Poisson. The MLP is the best calibrated (≈80% at all horizons); CatBoost slightly under-covers (77–78%).
-- Error grows with the horizon for every model, as expected.
+- CatBoost has 20–26% lower MAE than the best simple baseline at each horizon, and 4–7% lower MAE than the Poisson GLM.
+- CatBoost and the MLP are effectively tied on MAE: the gap is within the MLP's seed-to-seed spread. CatBoost has slightly lower RMSE and needs no GPU.
+- The MLP's intervals are closer to the nominal 80%, but its advantage in interval score exceeds the seed spread only at 15 minutes.
+- Poisson GLM intervals are too narrow (68–74% coverage): real demand is overdispersed relative to a Poisson.
 
 ## Where the models fail (30 min horizon, CatBoost)
 
@@ -70,7 +77,7 @@ Takeaways:
 
 - **Spikes are the main source of error:** the model systematically under-predicts them (bias ≈ −14 trips) and the interval covers only ~50% of them.
 - **Hardest zones by MAE:** JFK (11.7), LaGuardia (9.3), Penn Station (9.2), Times Sq (8.1).
-- **Largest single errors** are late-evening surges (21:30–23:00) around Lincoln Square East in late March, where ~150–210 trips were observed against ~50 predicted — consistent with event-driven demand (hypothesis; events data is not used).
+- Single chronological split over ~3 months; no cross-validation over time; CatBoost was run with one seed.
 - Rain has a small effect (+0.8 MAE); holidays could not be assessed — the test window contains none.
 
 ![Error by weekday and hour](assets/error_heatmap.png)
