@@ -2,7 +2,7 @@
 
 **English** · [Русский](README.ru.md)
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1FFTZZXznryuYXOFEaJ7MwF-1Qv84QwG3)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/LevTsaturyan/demandcast/blob/main/notebooks/demandcast.ipynb)
 
 Forecasts NYC Yellow Taxi pickups per zone **15, 30 and 60 minutes ahead**, with **80% prediction intervals**.
 Compares a statistical model, gradient boosting and a neural network, and analyses *where and why* the models fail (demand spikes, airports, rain, holidays).
