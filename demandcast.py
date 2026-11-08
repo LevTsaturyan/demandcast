@@ -415,6 +415,8 @@ def run(Y, zones, weather, args):
         tr, va, te = split(X, k)
         print(f"train {len(tr)}, val {len(va)}, test {len(te)}")
         preds = {"seasonal_naive": dict(point=te["lweek"].to_numpy(), lo=None, hi=None)}  # то же время неделю назад
+        preds["persistence"] = dict(point=te["lag0"].to_numpy(), lo=None, hi=None)
+        preds["mean_1h"] = dict(point=te["mean4"].to_numpy(), lo=None, hi=None)       
         preds["poisson_glm"] = pred_glm(fit_glm(tr), te)
         preds["catboost"] = pred_cb(fit_cb(tr, va), te)
         preds["mlp_quantile"] = pred_nn(fit_nn(tr, va, args.epochs, device), te)
