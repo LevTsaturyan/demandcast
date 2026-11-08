@@ -229,8 +229,8 @@ def _tensors(b, df, device):
     return (torch.tensor(x, device=device), torch.tensor(z, dtype=torch.long, device=device))
 
 
-def fit_nn(tr, va, epochs, device):
-    torch.manual_seed(0)
+def fit_nn(tr, va, epochs, device, seed=0):
+    torch.manual_seed(seed)
     d = lin(tr)[NUM]
     b = dict(mu=d.mean(), sd=d.std().replace(0, 1), zmap={z: i for i, z in enumerate(sorted(tr["zone"].unique()))})
     x, z = _tensors(b, tr, device)
