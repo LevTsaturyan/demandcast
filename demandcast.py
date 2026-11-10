@@ -267,6 +267,14 @@ def pred_nn(m, df):
 
 
 # ───────────────────────── оценка ─────────────────────────
+def conformal(p_test, p_val, y_val, alpha=0.2):
+    """Сдвигает границы интервала так, чтобы на validation покрытие стало 1 - alpha."""
+    s = np.maximum(p_val["lo"] - y_val, y_val - p_val["hi"])
+    level = min(1.0, np.ceil((len(s) + 1) * (1 - alpha)) / len(s))
+    q = np.quantile(s, level)
+    return dict(point=p_test["point"], lo=(p_test["lo"] - q).clip(0), hi=p_test["hi"] + q)
+
+
 def score(y, p):
     e = y - p["point"]
     r = dict(MAE=np.abs(e).mean(), RMSE=np.sqrt((e ** 2).mean()), WAPE=np.abs(e).sum() / y.sum())
@@ -321,6 +329,15 @@ def analyze(te, tr, p, k, zones):
 
 
 # ───────────────────────── графики и карты ─────────────────────────
+def save_demo(d, zones, folder=Path("demo")):
+    """Сохраняет прогнозы и границы районов для Streamlit-демо."""
+    folder.mkdir(exist_ok=True)
+    d[["ts_target", "zone", "zone_name", "y", "pred", "lo", "hi"]].to_parquet(folder / "predictions.parquet", index=False)
+    g = zones[zones["LocationID"].isin(d["zone"].unique())].to_crs(4326).set_index("LocationID")
+    g["geometry"] = g.geometry.simplify(0.0003)
+    (folder / "zones.geojson").write_text(g.to_json(), encoding="utf-8")
+
+
 def plot_metrics(m):
     m.pivot(index="model", columns="horizon_min", values="MAE").plot.bar(figsize=(8, 4), rot=0)
     plt.ylabel("MAE, поездок за 15 мин")
@@ -418,17 +435,19 @@ def run(Y, zones, weather, args):
         preds["persistence"] = dict(point=te["lag0"].to_numpy(), lo=None, hi=None)
         preds["mean_1h"] = dict(point=te["mean4"].to_numpy(), lo=None, hi=None)       
         preds["poisson_glm"] = pred_glm(fit_glm(tr), te)
-        preds["catboost"] = pred_cb(fit_cb(tr, va), te)
+        cb = fit_cb(tr, va)
+        preds["catboost"] = pred_cb(cb, te)
+        preds["catboost_cqr"] = conformal(preds["catboost"], pred_cb(cb, va), va["y"].to_numpy())
         preds["mlp_quantile"] = pred_nn(fit_nn(tr, va, args.epochs, device), te)
         y = te["y"].to_numpy()
         res = {n: score(y, p) for n, p in preds.items()}
         rows += [dict(horizon_min=15 * k, model=n, **r) for n, r in res.items()]
         print(pd.DataFrame(res).T.round(3))
         if 15 * k == args.focus:  # подробный разбор ошибок для одного горизонта
-            cand = [n for n, p in preds.items() if p["lo"] is not None]
-            best = min(cand, key=lambda n: res[n]["MAE"])
-            print(f"\nЛучшая модель с интервалами: {best}")
+            best = "catboost"
+            print(f"\nРазбор ошибок: {best}")
             d = analyze(te, tr, preds[best], k, zones)
+            save_demo(d, zones)
             plot_forecast(d, best)
             plot_heatmap(d)
             figs["error_map"] = make_error_map(d, zones)
@@ -438,6 +457,40 @@ def run(Y, zones, weather, args):
     return figs
 
 
+def backtest(Y, zones, weather, args, n_folds=3, test_days=14, val_days=14):
+    """Скользящая проверка: test сдвигается по времени, train содержит только прошлое."""
+    OUT.mkdir(exist_ok=True)
+    end = Y.index.max() + pd.Timedelta(minutes=15)
+    test_len, val_len = pd.Timedelta(days=test_days), pd.Timedelta(days=val_days)
+    first_val = end - n_folds * test_len - val_len
+    W = neighbor_matrix(zones, Y.columns.tolist())
+    sel = Y[Y.index < first_val].sum().nlargest(args.zones).index.tolist()
+    rows = []
+    for k in args.horizons:
+        X = make_dataset(Y, sel, W, weather, k)
+        gap = pd.Timedelta(minutes=15 * k)
+        for fold in range(n_folds):
+            t_test = end - (n_folds - fold) * test_len
+            t_val, t_end = t_test - val_len, t_test + test_len
+            tr = X[X["ts"] + gap < t_val]
+            va = X[(X["ts"] >= t_val) & (X["ts"] + gap < t_test)]
+            te = X[(X["ts"] >= t_test) & (X["ts"] + gap < t_end)]
+            cb = fit_cb(tr, va)
+            preds = {"persistence": dict(point=te["lag0"].to_numpy(), lo=None, hi=None),
+                     "seasonal_naive": dict(point=te["lweek"].to_numpy(), lo=None, hi=None),
+                     "poisson_glm": pred_glm(fit_glm(tr), te),
+                     "catboost": pred_cb(cb, te)}
+            preds["catboost_cqr"] = conformal(preds["catboost"], pred_cb(cb, va), va["y"].to_numpy())
+            y = te["y"].to_numpy()
+            rows += [dict(horizon_min=15 * k, fold=fold, test_start=t_test, model=n, **score(y, p))
+                     for n, p in preds.items()]
+    bt = pd.DataFrame(rows)
+    bt.to_csv(OUT / "backtest.csv", index=False)
+    summary = bt.groupby(["horizon_min", "model"])[["MAE", "coverage80", "interval_score"]].agg(["mean", "std"]).round(3)
+    print(summary)
+    return bt
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--months", nargs="+", default=["2024-01", "2024-02", "2024-03"])
@@ -445,11 +498,15 @@ def main():
     ap.add_argument("--horizons", nargs="+", type=int, default=[1, 2, 4], help="шаги по 15 минут")
     ap.add_argument("--focus", type=int, default=30, help="горизонт (мин) для разбора ошибок")
     ap.add_argument("--epochs", type=int, default=15)
+    ap.add_argument("--backtest", action="store_true", help="скользящая проверка вместо обычного запуска")
     args = ap.parse_args()
 
     Y = build_panel(load_trips(args.months), args.months)
     weather = load_weather(Y.index[0], Y.index[-1]).reindex(Y.index, method="ffill")  # час -> 15 минут
-    run(Y, load_zones(), weather, args)
+    if args.backtest:
+        backtest(Y, load_zones(), weather, args)
+    else:
+        run(Y, load_zones(), weather, args)
 
 
 if __name__ == "__main__":
