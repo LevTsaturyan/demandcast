@@ -1,5 +1,5 @@
 # DemandCast — short-term taxi demand forecasting with prediction intervals
-**Live demo:** [(https://demandcast.streamlit.app/)] (replay of the test period; TLC data is published with a delay, so this is not real time)
+**Live demo:** [[ссылка](https://demandcast.streamlit.app/)] (replay of the test period; TLC data is published with a delay, so this is not real time)
 
 **English** · [Русский](README.ru.md)
 
